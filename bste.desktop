@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=BSTE
+Comment=Basic and Simple Text Editor
+Exec=BSTE
+Icon=accessories-text-editor
+Terminal=false
+type=Application
+Categories=Utility;TextEditor;
