@@ -12,9 +12,6 @@
 #include <QRegularExpression>
 #include <QVector>
 #include <QMenu>
-#include <QSplitter>
-#include <QCompleter>
-#include <QProcess>
 
 class BSTE;
 
@@ -55,7 +52,6 @@ public:
     void zoomIn();
     void zoomOut();
     void zoomReset();
-    void enableAutoCompletion(bool enable);
     void setWordWrap(bool wrap);
 protected:
     void resizeEvent(QResizeEvent *event) override;
@@ -67,17 +63,13 @@ private slots:
     void updateLineNumberArea(const QRect &, int);
     void highlightCurrentLine();
     void updatePalette();
-    void updateCompleter();
 private:
     QWidget *lineNumberArea;
     SimpleHighlighter *highlighter = nullptr;
-    QCompleter *completer = nullptr;
     int currentLineNumber = 0;
     int tabSizeValue = 4;
     int zoomLevel = 0;
     QFont baseFont;
-    bool autoCompleteEnabled = false;
-    int completerWordLimit = 1000;
 };
 
 class MainWindow : public QMainWindow {
@@ -102,16 +94,10 @@ private slots:
     void goToLine();
     void changeLanguage(SimpleHighlighter::Language lang);
     void changeTabSize();
-    void toggleConsole();
-    void clearConsole();
-    void toggleAutoCompletion();
     void toggleWordWrap();
     void zoomIn();
     void zoomOut();
     void zoomReset();
-    void compileFile();
-    void runFile();
-    void buildFinished(int exitCode, QProcess::ExitStatus exitStatus);
 private:
     void initEditor();
     void initActions();
@@ -123,17 +109,13 @@ private:
     void loadFile(const QString &fileName);
     bool writeFile(const QString &fileName);
     void setCurrentFile(const QString &fileName);
-    void appendToConsole(const QString &text);
     BSTE *editor;
-    QPlainTextEdit *consoleOutput;
-    QSplitter *mainSplitter;
     QString curFile;
     QLabel *statusLabel;
     QMenu *fileMenu;
     QMenu *editMenu;
     QMenu *viewMenu;
     QMenu *languageMenu;
-    QMenu *buildMenu;
     QAction *newAct;
     QAction *openAct;
     QAction *saveAct;
@@ -143,8 +125,6 @@ private:
     QAction *replaceAct;
     QAction *goToLineAct;
     QAction *tabSizeAct;
-    QAction *consoleAct;
-    QAction *autoCompleteAct;
     QAction *wordWrapAct;
     QAction *plainAct;
     QAction *cppAct;
@@ -152,8 +132,6 @@ private:
     QAction *zoomInAct;
     QAction *zoomOutAct;
     QAction *zoomResetAct;
-    QAction *compileAct;
-    QAction *runAct;
     QWidget *searchWidget;
     QLineEdit *findInput;
     QLineEdit *replaceInput;
@@ -161,8 +139,6 @@ private:
     QPushButton *replaceBtn;
     QPushButton *replaceAllBtn;
     QPushButton *closeBtn;
-    QPushButton *clearConsoleBtn;
-    QProcess *buildProcess = nullptr;
 };
 
 #endif

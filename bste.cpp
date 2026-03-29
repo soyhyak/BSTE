@@ -20,7 +20,6 @@
 #include <QWheelEvent>
 #include <QScrollBar>
 #include <QStringListModel>
-#include <QAbstractItemView>
 
 LineNumberArea::LineNumberArea(BSTE *editor) : QWidget(editor), bsteEditor(editor) {}
 QSize LineNumberArea::sizeHint() const { return QSize(bsteEditor->lineNumberAreaWidth(), 0); }
@@ -64,20 +63,15 @@ void SimpleHighlighter::highlightBlock(const QString &text) {
 BSTE::BSTE(QWidget *parent) : QPlainTextEdit(parent) {
     lineNumberArea = new LineNumberArea(this);
     highlighter = new SimpleHighlighter(document());
-    completer = new QCompleter(this);
-    completer->setWidget(this);
-    completer->setCompletionMode(QCompleter::PopupCompletion);
     connect(this, &BSTE::blockCountChanged, this, &BSTE::updateLineNumberAreaWidth);
     connect(this, &BSTE::updateRequest, this, &BSTE::updateLineNumberArea);
     connect(this, &BSTE::cursorPositionChanged, this, &BSTE::highlightCurrentLine);
-    connect(this->document(), &QTextDocument::contentsChanged, this, &BSTE::updateCompleter);
     updateLineNumberAreaWidth(0);
     setWordWrapMode(QTextOption::NoWrap);
     baseFont = QFont("Monospace", 10);
     setFont(baseFont);
     setTabSize(4);
     updatePalette();
-    enableAutoCompletion(false);
     setCenterOnScroll(true);
 }
 int BSTE::lineNumberAreaWidth() {
@@ -148,18 +142,6 @@ void BSTE::wheelEvent(QWheelEvent *event) {
 void BSTE::zoomIn() { zoomLevel = qMin(zoomLevel + 1, 20); setFont(QFont(baseFont.family(), baseFont.pointSize() + zoomLevel)); }
 void BSTE::zoomOut() { zoomLevel = qMax(zoomLevel - 1, -10); setFont(QFont(baseFont.family(), baseFont.pointSize() + zoomLevel)); }
 void BSTE::zoomReset() { zoomLevel = 0; setFont(baseFont); }
-void BSTE::enableAutoCompletion(bool enable) {
-    autoCompleteEnabled = enable;
-    completer->setWidget(enable ? this : nullptr);
-}
-void BSTE::updateCompleter() {
-    if (!autoCompleteEnabled) return;
-    QString text = toPlainText();
-    QStringList words = text.split(QRegularExpression("\\W+"), Qt::SkipEmptyParts);
-    words.removeDuplicates();
-    if (words.size() > completerWordLimit) words = words.mid(0, completerWordLimit);
-    completer->setModel(new QStringListModel(words, completer));
-}
 void BSTE::setLanguage(SimpleHighlighter::Language lang) { if (highlighter) highlighter->setLanguage(lang); }
 void BSTE::setTabSize(int size) {
     tabSizeValue = qMax(1, size);
@@ -168,10 +150,6 @@ void BSTE::setTabSize(int size) {
 int BSTE::tabSize() const { return tabSizeValue; }
 void BSTE::setWordWrap(bool wrap) { setWordWrapMode(wrap ? QTextOption::WordWrap : QTextOption::NoWrap); }
 void BSTE::keyPressEvent(QKeyEvent *event) {
-    if (autoCompleteEnabled && completer && completer->popup()->isVisible() && (event->key() == Qt::Key_Enter || event->key() == Qt::Key_Return || event->key() == Qt::Key_Tab)) {
-        completer->popup()->hide();
-        return;
-    }
     if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
         QPlainTextEdit::keyPressEvent(event);
         QTextCursor cursor = textCursor();
@@ -184,19 +162,6 @@ void BSTE::keyPressEvent(QKeyEvent *event) {
         return;
     }
     QPlainTextEdit::keyPressEvent(event);
-    if (autoCompleteEnabled && completer) {
-        QTextCursor tc = textCursor();
-        tc.select(QTextCursor::WordUnderCursor);
-        QString prefix = tc.selectedText();
-        if (prefix.length() >= 2) {
-            completer->setCompletionPrefix(prefix);
-            if (completer->completionCount() > 0) {
-                QRect cr = cursorRect();
-                cr.setWidth(completer->popup()->sizeHintForColumn(0) + completer->popup()->verticalScrollBar()->sizeHint().width());
-                completer->complete(cr);
-            }
-        }
-    }
 }
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
@@ -207,13 +172,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     loadSettings();
     setCurrentFile(QString());
 }
-MainWindow::~MainWindow() {
-    if (buildProcess) {
-        buildProcess->kill();
-        buildProcess->waitForFinished();
-        delete buildProcess;
-    }
-}
+MainWindow::~MainWindow() {}
 void MainWindow::initEditor() {
     QWidget *container = new QWidget(this);
     QVBoxLayout *layout = new QVBoxLayout(container);
@@ -243,27 +202,11 @@ void MainWindow::initEditor() {
     searchLayout->addLayout(replaceLayout);
     searchWidget->setVisible(false);
     editor = new BSTE(this);
-    consoleOutput = new QPlainTextEdit(this);
-    consoleOutput->setReadOnly(true);
-    consoleOutput->setMaximumHeight(220);
-    consoleOutput->setVisible(false);
-    clearConsoleBtn = new QPushButton("Clear", this);
-    clearConsoleBtn->setFixedWidth(60);
-    QWidget *consoleWidget = new QWidget;
-    QHBoxLayout *consoleLayout = new QHBoxLayout(consoleWidget);
-    consoleLayout->setContentsMargins(0, 0, 0, 0);
-    consoleLayout->addWidget(consoleOutput);
-    consoleLayout->addWidget(clearConsoleBtn);
-    mainSplitter = new QSplitter(Qt::Vertical, container);
-    mainSplitter->addWidget(searchWidget);
-    mainSplitter->addWidget(editor);
-    mainSplitter->addWidget(consoleWidget);
-    mainSplitter->setStretchFactor(1, 1);
-    layout->addWidget(mainSplitter);
+    layout->addWidget(searchWidget);
+    layout->addWidget(editor);
     setCentralWidget(container);
     QFont font("Monospace", 10);
     editor->setFont(font);
-    consoleOutput->setFont(font);
     connect(editor->document(), &QTextDocument::contentsChanged, this, &MainWindow::documentWasModified);
     connect(editor, &QPlainTextEdit::cursorPositionChanged, this, &MainWindow::updateStatusBar);
     connect(nextBtn, &QPushButton::clicked, this, &MainWindow::findNext);
@@ -272,7 +215,6 @@ void MainWindow::initEditor() {
     connect(closeBtn, &QPushButton::clicked, this, [this](){ searchWidget->setVisible(false); });
     connect(findInput, &QLineEdit::returnPressed, this, &MainWindow::findNext);
     connect(replaceInput, &QLineEdit::returnPressed, this, &MainWindow::replaceText);
-    connect(clearConsoleBtn, &QPushButton::clicked, this, &MainWindow::clearConsole);
 }
 void MainWindow::initActions() {
     newAct = new QAction(tr("&New"), this); newAct->setShortcut(QKeySequence::New); connect(newAct, &QAction::triggered, this, &MainWindow::newFile);
@@ -284,8 +226,6 @@ void MainWindow::initActions() {
     replaceAct = new QAction(tr("&Replace"), this); replaceAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_H)); connect(replaceAct, &QAction::triggered, this, &MainWindow::showReplaceDialog);
     goToLineAct = new QAction(tr("Go to &Line"), this); goToLineAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_G)); connect(goToLineAct, &QAction::triggered, this, &MainWindow::goToLine);
     tabSizeAct = new QAction(tr("Tab &Size..."), this); connect(tabSizeAct, &QAction::triggered, this, &MainWindow::changeTabSize);
-    consoleAct = new QAction(tr("Show &Console"), this); consoleAct->setShortcut(QKeySequence("Ctrl+`")); consoleAct->setCheckable(true); connect(consoleAct, &QAction::triggered, this, &MainWindow::toggleConsole);
-    autoCompleteAct = new QAction(tr("Auto-&Completion"), this); autoCompleteAct->setCheckable(true); connect(autoCompleteAct, &QAction::triggered, this, &MainWindow::toggleAutoCompletion);
     wordWrapAct = new QAction(tr("Word &Wrap"), this); wordWrapAct->setCheckable(true); connect(wordWrapAct, &QAction::triggered, this, &MainWindow::toggleWordWrap);
     plainAct = new QAction(tr("Plain"), this); connect(plainAct, &QAction::triggered, this, [this](){ changeLanguage(SimpleHighlighter::Plain); });
     cppAct = new QAction(tr("C++"), this); connect(cppAct, &QAction::triggered, this, [this](){ changeLanguage(SimpleHighlighter::Cpp); });
@@ -293,8 +233,6 @@ void MainWindow::initActions() {
     zoomInAct = new QAction(tr("Zoom &In"), this); zoomInAct->setShortcut(QKeySequence::ZoomIn); connect(zoomInAct, &QAction::triggered, this, &MainWindow::zoomIn);
     zoomOutAct = new QAction(tr("Zoom &Out"), this); zoomOutAct->setShortcut(QKeySequence::ZoomOut); connect(zoomOutAct, &QAction::triggered, this, &MainWindow::zoomOut);
     zoomResetAct = new QAction(tr("Zoom &Reset"), this); zoomResetAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_0)); connect(zoomResetAct, &QAction::triggered, this, &MainWindow::zoomReset);
-    compileAct = new QAction(tr("&Compile"), this); compileAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_B)); connect(compileAct, &QAction::triggered, this, &MainWindow::compileFile);
-    runAct = new QAction(tr("&Run"), this); runAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_R)); connect(runAct, &QAction::triggered, this, &MainWindow::runFile);
 }
 void MainWindow::initMenus() {
     fileMenu = menuBar()->addMenu(tr("&File"));
@@ -310,21 +248,16 @@ void MainWindow::initMenus() {
     editMenu->addAction(goToLineAct);
     editMenu->addSeparator();
     editMenu->addAction(tabSizeAct);
-    editMenu->addAction(autoCompleteAct);
     languageMenu = editMenu->addMenu(tr("&Language"));
     languageMenu->addAction(plainAct);
     languageMenu->addAction(cppAct);
     languageMenu->addAction(pythonAct);
     viewMenu = menuBar()->addMenu(tr("&View"));
-    viewMenu->addAction(consoleAct);
     viewMenu->addAction(wordWrapAct);
     viewMenu->addSeparator();
     viewMenu->addAction(zoomInAct);
     viewMenu->addAction(zoomOutAct);
     viewMenu->addAction(zoomResetAct);
-    buildMenu = menuBar()->addMenu(tr("&Build"));
-    buildMenu->addAction(compileAct);
-    buildMenu->addAction(runAct);
 }
 void MainWindow::initStatusBar() {
     statusLabel = new QLabel(" Line: 1, Col: 1 ");
@@ -386,18 +319,6 @@ void MainWindow::changeTabSize() {
         settings.setValue("tabSize", size);
     }
 }
-void MainWindow::toggleConsole() {
-    bool visible = consoleOutput->isVisible();
-    consoleOutput->setVisible(!visible);
-    consoleAct->setChecked(!visible);
-}
-void MainWindow::clearConsole() { consoleOutput->clear(); }
-void MainWindow::toggleAutoCompletion() {
-    bool enabled = autoCompleteAct->isChecked();
-    editor->enableAutoCompletion(enabled);
-    QSettings settings("BSTE-Project", "BSTE");
-    settings.setValue("autoComplete", enabled);
-}
 void MainWindow::toggleWordWrap() {
     bool wrap = wordWrapAct->isChecked();
     editor->setWordWrap(wrap);
@@ -407,62 +328,12 @@ void MainWindow::toggleWordWrap() {
 void MainWindow::zoomIn() { editor->zoomIn(); }
 void MainWindow::zoomOut() { editor->zoomOut(); }
 void MainWindow::zoomReset() { editor->zoomReset(); }
-void MainWindow::compileFile() {
-    if (curFile.isEmpty()) { QMessageBox::warning(this, "BSTE", tr("Save file first")); return; }
-    QString ext = QFileInfo(curFile).suffix();
-    if (buildProcess) buildProcess->kill();
-    buildProcess = new QProcess(this);
-    connect(buildProcess, &QProcess::readyReadStandardOutput, this, [this](){ appendToConsole(buildProcess->readAllStandardOutput()); });
-    connect(buildProcess, &QProcess::readyReadStandardError, this, [this](){ appendToConsole(buildProcess->readAllStandardError()); });
-    connect(buildProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this, &MainWindow::buildFinished);
-    consoleOutput->appendPlainText("=== Compile started ===\n");
-    if (ext == "cpp" || ext == "cxx" || ext == "cc") {
-        QString out = curFile.left(curFile.lastIndexOf('.')) + ".out";
-        buildProcess->start("g++", QStringList() << "-Wall" << "-O2" << curFile << "-o" << out);
-    } else if (ext == "py") {
-        buildProcess->start("python", QStringList() << "-m" << "py_compile" << curFile);
-    } else {
-        appendToConsole("Unsupported file type for compilation.\n");
-        return;
-    }
-}
-void MainWindow::runFile() {
-    if (curFile.isEmpty()) { QMessageBox::warning(this, "BSTE", tr("Save file first")); return; }
-    QString base = curFile.left(curFile.lastIndexOf('.'));
-    if (QFileInfo(curFile).suffix() == "py") {
-        buildProcess = new QProcess(this);
-        connect(buildProcess, &QProcess::readyReadStandardOutput, this, [this](){ appendToConsole(buildProcess->readAllStandardOutput()); });
-        connect(buildProcess, &QProcess::readyReadStandardError, this, [this](){ appendToConsole(buildProcess->readAllStandardError()); });
-        consoleOutput->appendPlainText("=== Run started ===\n");
-        buildProcess->start("python", QStringList() << curFile);
-        connect(buildProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this, &MainWindow::buildFinished);
-    } else {
-        QString exe = base + ".out";
-        if (!QFile::exists(exe)) { appendToConsole("Executable not found. Compile first.\n"); return; }
-        buildProcess = new QProcess(this);
-        connect(buildProcess, &QProcess::readyReadStandardOutput, this, [this](){ appendToConsole(buildProcess->readAllStandardOutput()); });
-        connect(buildProcess, &QProcess::readyReadStandardError, this, [this](){ appendToConsole(buildProcess->readAllStandardError()); });
-        consoleOutput->appendPlainText("=== Run started ===\n");
-        buildProcess->start(exe, QStringList());
-        connect(buildProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this, &MainWindow::buildFinished);
-    }
-}
-void MainWindow::buildFinished(int exitCode, QProcess::ExitStatus exitStatus) {
-    appendToConsole(QString("\n=== Finished with code %1 ===\n").arg(exitCode));
-    buildProcess->deleteLater();
-    buildProcess = nullptr;
-}
-void MainWindow::appendToConsole(const QString &text) { consoleOutput->appendPlainText(text); }
 void MainWindow::loadSettings() {
     QSettings settings("BSTE-Project", "BSTE");
     restoreGeometry(settings.value("geometry").toByteArray());
     restoreState(settings.value("windowState").toByteArray());
-    if (mainSplitter) mainSplitter->restoreState(settings.value("splitterState").toByteArray());
     int savedTab = settings.value("tabSize", 4).toInt();
     editor->setTabSize(savedTab);
-    bool autoComp = settings.value("autoComplete", false).toBool();
-    autoCompleteAct->setChecked(autoComp);
-    editor->enableAutoCompletion(autoComp);
     bool wrap = settings.value("wordWrap", false).toBool();
     wordWrapAct->setChecked(wrap);
     editor->setWordWrap(wrap);
@@ -471,9 +342,7 @@ void MainWindow::saveSettings() {
     QSettings settings("BSTE-Project", "BSTE");
     settings.setValue("geometry", saveGeometry());
     settings.setValue("windowState", saveState());
-    if (mainSplitter) settings.setValue("splitterState", mainSplitter->saveState());
     settings.setValue("tabSize", editor->tabSize());
-    settings.setValue("autoComplete", autoCompleteAct->isChecked());
     settings.setValue("wordWrap", wordWrapAct->isChecked());
 }
 void MainWindow::newFile() { if (maybeSave()) { editor->clear(); setCurrentFile(QString()); } }
